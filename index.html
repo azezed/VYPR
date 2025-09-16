@@ -1,0 +1,281 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>VENOM</title>
+  <link rel="icon" href="icon.png">
+  <style>
+    @font-face{
+        font-family: "OCR A";
+        src: url(OCR-a___.ttf) format("truetype");
+    }
+    :root{
+      --cell:30px;
+      --cols:20;
+      --rows:20;
+      --bg:#000000dc;
+      --panel:#000000;
+      --accent:#00e676;
+      --food:#dd0b00;
+      --muted:#9aa4b2;
+    }
+html{
+    background-image: url("BG.png");
+}   
+    *{box-sizing:border-box}
+    body{background:var(--bg); color:#007af5; font-family:"OCR A"; display:flex; min-height:100vh; align-items:center; justify-content:center; margin:0; padding:24px;}
+    .wrap{display:flex; gap:18px; align-items:flex-start}
+    .game{background:linear-gradient(180deg, #0059ff5d, #00d9ff); padding:1px; border-radius:2px; box-shadow:0 6px 30px rgba(17,0,255,0.6)}
+    .grid{
+      width:calc(var(--cols) * var(--cell));
+      height:calc(var(--rows) * var(--cell));
+      display:grid;
+      grid-template-columns:repeat(var(--cols), var(--cell));
+      grid-template-rows:repeat(var(--rows), var(--cell));
+      background:#000;
+      border-radius:6px;
+      overflow:hidden;
+      position:relative;
+    }
+    .cell{width:var(--cell); height:var(--cell); background:transparent; border:1px solid rgba(149,198,255,0.027)}
+    .snake{background:radial-gradient(circle,#160f16 0%, rgb(47, 0, 255) 100%); border:1px solid rgb(85, 125, 255)}
+    .food{
+      background:radial-gradient(circle, rgb(225,255,52), var(--food) 100%);
+      box-shadow:0 0 8px rgba(255,59,48,.6);
+      animation:pulse 1s infinite;
+    }
+    @keyframes pulse {
+      0%,100% { transform:scale(0.7); }
+      50% { transform:scale(1); }
+    }
+    .panel{width:220px; background:var(--panel); padding:12px; border: 1px solid rgb(0, 10, 155); border-radius:2px; color:var(--muted)}
+    .panel h1{margin:0; font-size:16px; color:#e6f1ff}
+    .score{font-size:28px; color:var(--accent); margin:8px 0}
+    .buttons{display:flex; gap:8px; margin-top:12px}
+    button{background:#0b3240; color:#eaf6ff; border:0; padding:8px 10px; border-radius:8px; cursor:pointer}
+    .muted{font-size:13px; color:var(--muted)}
+    .hint{margin-top:8px; font-size:13px}
+    .footer{margin-top:14px; font-size:12px; color:#8fa0b4}
+    .controls{display:grid; gap:6px; margin-top:10px}
+    .kbd{display:inline-block; padding:4px 8px; border-radius:6px; background:#061827; color:#cfe8ff; font-size:13px}
+  </style>
+</head>
+<body>
+  <!-- Eat sound effect -->
+  <audio id="eatSound" src="eat.mp3" preload="auto"></audio>
+
+  <!-- Background music (hidden, auto handled by JS) -->
+  <audio id="bgMusic" src="MUSIC.mp3" preload="auto" loop></audio>
+
+  <div class="wrap">
+    <div class="game">
+      <div id="grid" class="grid" aria-label="snake grid"></div>
+    </div>
+
+    <aside class="panel">
+      <h1>VENOM</h1>
+      <div class="score">Score: <span id="score">0</span></div>
+      <div class="muted">Speed: <span id="speedLabel">Normal</span></div>
+      <div class="muted">Rows x Cols: <span id="sizeLabel">20 x 20</span></div>
+
+      <div class="controls">
+        <div class="buttons">
+          <button id="startBtn">Start</button>
+          <button id="pauseBtn">Pause</button>
+          <button id="resetBtn">Reset</button>
+        </div>
+
+        <label class="muted">Grid size:
+          <select id="sizeSel">
+            <option value="15">15 × 15</option>
+            <option value="20" selected>20 × 20</option>
+            <option value="25">25 × 25</option>
+          </select>
+        </label>
+
+        <label class="muted">Speed:
+          <select id="speedSel">
+            <option value="200">Slow</option>
+            <option value="120" selected>Normal</option>
+            <option value="70">Fast</option>
+          </select>
+        </label>
+
+        <div class="hint">Controls: <span class="kbd">↑</span> <span class="kbd">↓</span> <span class="kbd">←</span> <span class="kbd">→</span> or WASD</div>
+      </div>
+
+      <div class="footer">Press Start, eat food to grow. Don’t hit yourself. Walls wrap around.</div>
+    </aside>
+  </div>
+
+  <script>
+  (function(){
+    const gridEl = document.getElementById('grid');
+    const scoreEl = document.getElementById('score');
+    const startBtn = document.getElementById('startBtn');
+    const pauseBtn = document.getElementById('pauseBtn');
+    const resetBtn = document.getElementById('resetBtn');
+    const sizeSel = document.getElementById('sizeSel');
+    const speedSel = document.getElementById('speedSel');
+    const speedLabel = document.getElementById('speedLabel');
+    const sizeLabel = document.getElementById('sizeLabel');
+    const eatSound = document.getElementById('eatSound');
+    const bgMusic = document.getElementById('bgMusic');
+
+    let cols = 20, rows = 20;
+    let cells = [];
+    let snake = [];
+    let dir = {r:0,c:1};
+    let food = null;
+    let score = 0;
+    let running = false;
+    let timer = null;
+    let stepDelay = 120;
+
+    function setGridSize(n){
+      cols = n; rows = n;
+      document.documentElement.style.setProperty('--cols', cols);
+      document.documentElement.style.setProperty('--rows', rows);
+      sizeLabel.textContent = `${rows} x ${cols}`;
+      rebuildGrid();
+    }
+
+    function rebuildGrid(){
+      gridEl.innerHTML = '';
+      cells = [];
+      for(let r=0;r<rows;r++){
+        for(let c=0;c<cols;c++){
+          const d = document.createElement('div');
+          d.className = 'cell';
+          d.dataset.r = r; d.dataset.c = c;
+          gridEl.appendChild(d);
+          cells.push(d);
+        }
+      }
+    }
+
+    function posToIndex(p){ return p.r * cols + p.c }
+    function randPos(){ return {r: Math.floor(Math.random()*rows), c: Math.floor(Math.random()*cols)} }
+
+    function placeFood(){
+      let tries=0;
+      do{
+        food = randPos();
+        tries++;
+        if(!snake.some(s=>s.r===food.r && s.c===food.c)) break;
+      }while(tries<1000);
+      render();
+    }
+
+    function resetGame(){
+      running = false;
+      clearInterval(timer);
+      bgMusic.pause();
+      const midR = Math.floor(rows/2);
+      const midC = Math.floor(cols/2);
+      snake = [ {r:midR, c:midC-1}, {r:midR, c:midC}, {r:midR, c:midC+1} ];
+      dir = {r:0,c:1};
+      score = 0; scoreEl.textContent = score;
+      placeFood();
+      render();
+    }
+
+    function render(){
+      for(let i=0;i<cells.length;i++) cells[i].className = 'cell';
+      for(let i=0;i<snake.length;i++){
+        const s = snake[i];
+        const idx = posToIndex(s);
+        if(cells[idx]) cells[idx].classList.add('snake');
+      }
+      if(food){
+        const idx = posToIndex(food);
+        if(cells[idx]) cells[idx].classList.add('food');
+      }
+    }
+
+    function step(){
+      const head = {...snake[snake.length-1]};
+      head.r += dir.r; head.c += dir.c;
+
+      // wraparound
+      if(head.r<0) head.r = rows-1;
+      if(head.r>=rows) head.r = 0;
+      if(head.c<0) head.c = cols-1;
+      if(head.c>=cols) head.c = 0;
+
+      if(snake.some(s=>s.r===head.r && s.c===head.c)) { gameOver(); return; }
+
+      snake.push(head);
+      if(food && head.r===food.r && head.c===food.c){
+        score += 1; scoreEl.textContent = score;
+        eatSound.currentTime = 0;
+        eatSound.play();
+        placeFood();
+      } else {
+        snake.shift();
+      }
+      render();
+    }
+
+    function gameOver(){
+      running = false; clearInterval(timer);
+      bgMusic.pause();
+      alert('Game over — score: '+score);
+    }
+
+    function start(){
+      if(running) return;
+      running = true;
+      clearInterval(timer);
+      timer = setInterval(step, stepDelay);
+      bgMusic.currentTime = 0;
+      bgMusic.play();
+    }
+    function pause(){
+      running = false; clearInterval(timer);
+      bgMusic.pause();
+    }
+
+    window.addEventListener('keydown', e=>{
+      const key = e.key;
+      let nd = null;
+      if(key==='ArrowUp' || key==='w' || key==='W') nd={r:-1,c:0};
+      if(key==='ArrowDown' || key==='s' || key==='S') nd={r:1,c:0};
+      if(key==='ArrowLeft' || key==='a' || key==='A') nd={r:0,c:-1};
+      if(key==='ArrowRight' || key==='d' || key==='D') nd={r:0,c:1};
+      if(nd){
+        if(snake.length>1){
+          const head = snake[snake.length-1];
+          const neck = snake[snake.length-2];
+          if(head.r + nd.r === neck.r && head.c + nd.c === neck.c) return;
+        }
+        dir = nd;
+        e.preventDefault();
+      }
+      if(key===' '){ if(running) pause(); else start(); }
+    });
+
+    startBtn.addEventListener('click', ()=>start());
+    pauseBtn.addEventListener('click', ()=>pause());
+    resetBtn.addEventListener('click', ()=>resetGame());
+
+    sizeSel.addEventListener('change', ()=>{
+      const n = parseInt(sizeSel.value,10);
+      setGridSize(n);
+      resetGame();
+    });
+    speedSel.addEventListener('change', ()=>{
+      stepDelay = parseInt(speedSel.value,10);
+      let label = 'Normal';
+      if(stepDelay<=80) label='Fast'; else if(stepDelay>=180) label='Slow';
+      speedLabel.textContent = label;
+      if(running){ clearInterval(timer); timer = setInterval(step, stepDelay); }
+    });
+
+    setGridSize(20);
+    resetGame();
+  })();
+  </script>
+</body>
+</html>
